@@ -1,5 +1,5 @@
 use serde::Serialize;
-use similar::{Algorithm, ChangeTag, DiffOp, TextDiff};
+use similar::{Algorithm, ChangeTag, TextDiff};
 
 #[derive(Serialize)]
 pub struct DiffSegment {
@@ -21,70 +21,46 @@ pub struct DiffResult {
 
 #[tauri::command]
 pub fn diff_texts(left: String, right: String) -> DiffResult {
-    let diff = TextDiff::configure()
-        .algorithm(Algorithm::Myers)
-        .diff_lines(&left, &right);
+    // Keep line numbers stable: line N always compares with line N.
+    // This avoids row inflation when diff algorithm re-groups long blank ranges.
+    let left_lines: Vec<&str> = left.split('\n').collect();
+    let right_lines: Vec<&str> = right.split('\n').collect();
+    let max_len = left_lines.len().max(right_lines.len());
 
-    let mut marked_left: Vec<DiffLine> = Vec::new();
-    let mut marked_right: Vec<DiffLine> = Vec::new();
+    let mut marked_left: Vec<DiffLine> = Vec::with_capacity(max_len);
+    let mut marked_right: Vec<DiffLine> = Vec::with_capacity(max_len);
 
-    for op in diff.ops() {
-        match op {
-            DiffOp::Equal { .. } => {
-                for change in diff.iter_changes(op) {
-                    let line = change.value().trim_end_matches('\n').to_string();
+    for i in 0..max_len {
+        let left_text = left_lines.get(i).copied().unwrap_or("");
+        let right_text = right_lines.get(i).copied().unwrap_or("");
+        let changed = left_text != right_text;
 
-                    marked_left.push(DiffLine {
-                        segments: vec![DiffSegment {
-                            text: line.clone(),
-                            kind: "equal".to_string(),
-                        }],
-                        changed: false,
-                    });
-                    marked_right.push(DiffLine {
-                        segments: vec![DiffSegment {
-                            text: line,
-                            kind: "equal".to_string(),
-                        }],
-                        changed: false,
-                    });
-                }
-            }
-            _ => {
-                let mut left_block: Vec<&str> = Vec::new();
-                let mut right_block: Vec<&str> = Vec::new();
-
-                for change in diff.iter_changes(op) {
-                    match change.tag() {
-                        ChangeTag::Delete => {
-                            left_block.push(change.value().trim_end_matches('\n'));
-                        }
-                        ChangeTag::Insert => {
-                            right_block.push(change.value().trim_end_matches('\n'));
-                        }
-                        ChangeTag::Equal => {
-                            let line = change.value().trim_end_matches('\n');
-                            left_block.push(line);
-                            right_block.push(line);
-                        }
-                    }
-                }
-
-                let max_len = left_block.len().max(right_block.len());
-                for i in 0..max_len {
-                    let l = left_block.get(i).copied().unwrap_or("");
-                    let r = right_block.get(i).copied().unwrap_or("");
-                    let (left_segments, right_segments) = highlight_line_diff(l, r);
-                    marked_left.push(DiffLine {
-                        segments: left_segments,
-                        changed: true,
-                    });
-                    marked_right.push(DiffLine {
-                        segments: right_segments,
-                        changed: true,
-                    });
-                }
-            }
+        if changed {
+            let (left_segments, right_segments) = highlight_line_diff(left_text, right_text);
+            marked_left.push(DiffLine {
+                segments: left_segments,
+                changed: true,
+            });
+            marked_right.push(DiffLine {
+                segments: right_segments,
+                changed: true,
+            });
+        } else {
+            let line = left_text.to_string();
+            marked_left.push(DiffLine {
+                segments: vec![DiffSegment {
+                    text: line.clone(),
+                    kind: "equal".to_string(),
+                }],
+                changed: false,
+            });
+            marked_right.push(DiffLine {
+                segments: vec![DiffSegment {
+                    text: line,
+                    kind: "equal".to_string(),
+                }],
+                changed: false,
+            });
         }
     }
 
