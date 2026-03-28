@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: # 允许你在 GitHub Actions 面板手动触发工作流
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,8 +13,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      # 关键：开启 AVX2 及相关现代指令集优化。
-      # x86-64-v3 架构级正好涵盖了 AVX2, BMI1, BMI2, FMA 等指令，这能极大地提升 similar 库（Diff 引擎）的计算性能
+      # 开启 AVX2 及相关现代指令集优化
       RUSTFLAGS: "-C target-cpu=x86-64-v3"
 
     steps:
@@ -30,7 +29,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          # 自动利用 pnpm-lock.yaml 缓存前端依赖，加快后续构建
           cache: 'pnpm' 
 
       - name: Setup Rust toolchain
@@ -44,22 +42,26 @@ jobs:
           workspaces: "src-tauri"
 
       - name: Install frontend dependencies
-        run: pnpm install
+        # 安装前端依赖（允许根据 package.json 自动匹配，不强校验锁文件）
+        run: pnpm install --no-frozen-lockfile
+
+      - name: 🛠️ Fix Tauri Version Mismatch (Auto Sync)
+        # 关键修复步：动态让 Rust 后端依赖升级对齐前端版本，绕过 Tauri 的拦截！
+        run: |
+          cd src-tauri
+          cargo update
 
       - name: Build Tauri App (No Installer)
-        # 关键：Tauri v2 中使用 --no-bundle 会跳过所有安装包(MSI/NSIS)的生成，只编译裸可执行文件
         run: pnpm tauri build --no-bundle
 
       - name: Package as ZIP
-        # 使用 Windows 默认的 PowerShell 脚本将生成的 exe 提取并打包成 zip
         run: |
           New-Item -ItemType Directory -Force -Path release-zip
           
-          # 注意：这里的 mini-compare.exe 取决于 src-tauri/Cargo.toml 中的 package.name
-          # 如果你的 Cargo 项目名称不同，请将此处的 mini-compare.exe 修改为实际名称
+          # 将编译出的 exe 放入待压缩目录
           Copy-Item src-tauri\target\release\mini-compare.exe -Destination release-zip\
           
-          # 压缩成 zip 格式
+          # 打包为 zip
           Compress-Archive -Path release-zip\* -DestinationPath mini-compare-windows-avx2.zip
 
       - name: Upload Artifact
