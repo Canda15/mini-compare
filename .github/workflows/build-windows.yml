@@ -13,7 +13,6 @@ jobs:
     runs-on: windows-latest
 
     env:
-      # 开启 AVX2 及相关现代指令集优化
       RUSTFLAGS: "-C target-cpu=x86-64-v3"
 
     steps:
@@ -23,13 +22,15 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
-          version: 8
+          # 【关键修改 1】：升级到 pnpm 9，完美修复对原生可选包 (Optional Dependencies) 的解析 Bug
+          version: 9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          cache: 'pnpm' 
+          # 【关键修改 2】：推荐将 Node.js 升级到 20 (LTS)，Vite 6 和 Tailwind v4 对 Node 20 的原生模块支持更好
+          node-version: 20
+          # 注意：这里我们去掉了 cache: 'pnpm'，是为了防止 GitHub 恢复上次那个损坏的缓存
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -42,11 +43,10 @@ jobs:
           workspaces: "src-tauri"
 
       - name: Install frontend dependencies
-        # 安装前端依赖（允许根据 package.json 自动匹配，不强校验锁文件）
-        run: pnpm install --no-frozen-lockfile
+        # 【关键修改 3】：加入 --force 强制重新拉取所有依赖，确保一定会下载 Windows 版的 tailwindcss-oxide
+        run: pnpm install --no-frozen-lockfile --force
 
       - name: 🛠️ Fix Tauri Version Mismatch (Auto Sync)
-        # 关键修复步：动态让 Rust 后端依赖升级对齐前端版本，绕过 Tauri 的拦截！
         run: |
           cd src-tauri
           cargo update
@@ -58,10 +58,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path release-zip
           
-          # 将编译出的 exe 放入待压缩目录
+          # 根据报错日志，你的主程序名称就是 mini-compare.exe
           Copy-Item src-tauri\target\release\mini-compare.exe -Destination release-zip\
           
-          # 打包为 zip
           Compress-Archive -Path release-zip\* -DestinationPath mini-compare-windows-avx2.zip
 
       - name: Upload Artifact
