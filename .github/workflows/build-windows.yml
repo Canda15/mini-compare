@@ -1,0 +1,70 @@
+name: Build Windows Release (AVX2)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch: # 允许你在 GitHub Actions 面板手动触发工作流
+
+jobs:
+  build:
+    name: Build Tauri on Windows
+    runs-on: windows-latest
+
+    env:
+      # 关键：开启 AVX2 及相关现代指令集优化。
+      # x86-64-v3 架构级正好涵盖了 AVX2, BMI1, BMI2, FMA 等指令，这能极大地提升 similar 库（Diff 引擎）的计算性能
+      RUSTFLAGS: "-C target-cpu=x86-64-v3"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          # 自动利用 pnpm-lock.yaml 缓存前端依赖，加快后续构建
+          cache: 'pnpm' 
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri App (No Installer)
+        # 关键：Tauri v2 中使用 --no-bundle 会跳过所有安装包(MSI/NSIS)的生成，只编译裸可执行文件
+        run: pnpm tauri build --no-bundle
+
+      - name: Package as ZIP
+        # 使用 Windows 默认的 PowerShell 脚本将生成的 exe 提取并打包成 zip
+        run: |
+          New-Item -ItemType Directory -Force -Path release-zip
+          
+          # 注意：这里的 mini-compare.exe 取决于 src-tauri/Cargo.toml 中的 package.name
+          # 如果你的 Cargo 项目名称不同，请将此处的 mini-compare.exe 修改为实际名称
+          Copy-Item src-tauri\target\release\mini-compare.exe -Destination release-zip\
+          
+          # 压缩成 zip 格式
+          Compress-Archive -Path release-zip\* -DestinationPath mini-compare-windows-avx2.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mini-compare-windows-avx2
+          path: mini-compare-windows-avx2.zip
+          retention-days: 7
